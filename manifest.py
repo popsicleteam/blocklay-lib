@@ -1,6 +1,9 @@
 package(
     "blocklay",
-    ("__init__.py",),
-    base_path="..",
+    (
+        "__init__.py",
+        "event.py",
+    ),
+    base_path=".",
     opt=3,
 )
