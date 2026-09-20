@@ -1,19 +1,25 @@
 import asyncio
 import time
 
+import machine
+
 from .event import Event
 from .lib import pin
 
 __all__ = (
+    "Event",
+    # core
     "call",
     "stop",
     "task",
-    "broadcast",
     "start",
     "shutdown",
-    "Event",
+    # helpers
+    "create_timer",
     "time_meter",
     "reset_time_meter",
+    "loop_demon",
+    # built-in libraries
     "pin",
 )
 
@@ -21,20 +27,46 @@ FRAME_MS = 5
 
 _task_groups = None
 _event_groups = None
+_variables = None
+_timers = None
+
 _time_meter = 0
+
 
 asyncio.new_event_loop()
 
 
-def call(task_script, *args):
-    event_loop = asyncio.get_event_loop()
-    global _task_groups
-    if _task_groups is None:
-        _task_groups = {}
+def __getattr__(attr):
+    return _variables.get(attr, 0) if _variables is not None else 0
 
-    task_group_name = task_script.__globals__["__file__"]
-    task_group = _task_groups.setdefault(task_group_name, [])
-    task_group.append(event_loop.create_task(task_script(*args)))
+
+def __setattr__(attr, value):
+    global _variables
+    if _variables is None:
+        _variables = {}
+    if value is None:
+        _variables.pop(attr, None)
+    else:
+        _variables[attr] = value
+
+
+def call(task_script, *args):
+    if type(task_script) is str:
+        global _event_groups
+        if _event_groups is None:
+            _event_groups = {}
+
+        event = _event_groups.setdefault(task_script, Event())
+        event.set()
+    else:
+        global _task_groups
+        if _task_groups is None:
+            _task_groups = {}
+
+        event_loop = asyncio.get_event_loop()
+        task_group_name = task_script.__globals__["__file__"]
+        task_group = _task_groups.setdefault(task_group_name, [])
+        task_group.append(event_loop.create_task(task_script(*args)))
 
 
 def stop(task_group_name):
@@ -96,40 +128,65 @@ def task(event_flag=None, **kwargs):
     return call
 
 
-def broadcast(event):
-    if type(event) is str:
-        event = _event_groups.setdefault(event, Event())
-    event.set()
-
-
 def reset():
     event_loop = asyncio.get_event_loop()
     event_loop.stop()
     event_loop.close()
 
-    global _task_groups, _event_groups
+    global _task_groups, _event_groups, _variables, _timers
     if _task_groups is not None:
         _task_groups.clear()
         _task_groups = None
+        print(".", end="")
 
     if _event_groups is not None:
         _event_groups.clear()
         _event_groups = None
+        print(".", end="")
+
+    if _variables is not None:
+        _variables.clear()
+        _variables = None
+        print(".", end="")
+
+    if _timers is not None:
+        for timer in _timers.values():
+            timer.deinit()
+            print(".", end="")
+        _timers.clear()
+        _timers = None
+        print(".", end="")
 
 
-def start():
+def start(task_script=None):
     event_loop = asyncio.get_event_loop()
     _time_meter = time.ticks_ms()
     try:
+        if task_script is not None:
+            call(task_script)
         event_loop.run_forever()
     except KeyboardInterrupt:
-        print("Shutdown, Bye!")
+        print("Shutdown.", end="")
     finally:
         reset()
+        print(".Bye!")
 
 
 def shutdown():
     raise KeyboardInterrupt
+
+
+def create_timer():
+    global _timers
+    if _timers is None:
+        _timers = {}
+    try:
+        timer = machine.Timer()
+    except:
+        id = len(_timers)
+        timer = machine.Timer(id)
+    _timers[timer] = timer
+    return timer
 
 
 def time_meter():
@@ -139,3 +196,7 @@ def time_meter():
 def reset_time_meter():
     global _time_meter
     _time_meter = time.ticks_ms()
+
+
+async def loop_demon():
+    await asyncio.sleep(0)
