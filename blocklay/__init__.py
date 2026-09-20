@@ -1,11 +1,27 @@
 import asyncio
+import time
 
 from .event import Event
+from .lib import pin
 
-__all__ = ("call", "stop", "task", "broadcast", "start", "shutdown", "Event")
+__all__ = (
+    "call",
+    "stop",
+    "task",
+    "broadcast",
+    "start",
+    "shutdown",
+    "Event",
+    "time_meter",
+    "reset_time_meter",
+    "pin",
+)
+
+FRAME_MS = 5
 
 _task_groups = None
 _event_groups = None
+_time_meter = 0
 
 asyncio.new_event_loop()
 
@@ -37,42 +53,53 @@ def event_task(event_name):
     if _event_groups is None:
         _event_groups = {}
 
-    def task(task_script):
+    def task_wrap(task_script):
         event = _event_groups.setdefault(event_name, Event())
 
         async def script():
             while True:
                 await event.wait()
                 call(task_script)
-                await asyncio.sleep_ms(5)
+                await asyncio.sleep_ms(FRAME_MS)
                 event.clear()
 
         call(script)
 
-    return task
+    return task_wrap
 
 
-def flag_task(flag):
-    def task(task_script):
+def flag_task(flag, once=True):
+    def task_wrap(task_script):
         async def script():
+            is_called = False
             while True:
                 if await flag():
-                    call(task_script)
-                await asyncio.sleep_ms(5)
+                    if not is_called:
+                        call(task_script)
+                        is_called = once
+                else:
+                    is_called = False
+                await asyncio.sleep_ms(FRAME_MS)
 
         call(script)
 
-    return task
+    return task_wrap
 
 
-def task(event_flag=None):
+def task(event_flag=None, **kwargs):
     if type(event_flag) is str:
         return event_task(event_flag)
 
     if callable(event_flag):
-        return flag_task(event_flag)
+        return flag_task(event_flag, **kwargs)
 
     return call
+
+
+def broadcast(event):
+    if type(event) is str:
+        event = _event_groups.setdefault(event, Event())
+    event.set()
 
 
 def reset():
@@ -92,6 +119,7 @@ def reset():
 
 def start():
     event_loop = asyncio.get_event_loop()
+    _time_meter = time.ticks_ms()
     try:
         event_loop.run_forever()
     except KeyboardInterrupt:
@@ -104,7 +132,10 @@ def shutdown():
     raise KeyboardInterrupt
 
 
-def broadcast(event):
-    if type(event) is str:
-        event = _event_groups.setdefault(event, Event())
-    event.set()
+def time_meter():
+    return time.ticks_diff(time.ticks_ms(), _time_meter)
+
+
+def reset_time_meter():
+    global _time_meter
+    _time_meter = time.ticks_ms()
